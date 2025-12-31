@@ -84,3 +84,7 @@ The script formats rsync output for easier reading:
 - **Do not edit the logic section**: especially the exclude loop, unless you fully understand the ZFS/rsync interaction.
 - **Dry Run**: Set `ENABLE_DRY_RUN=true` to test. **Note:** In Dry Run, snapshots are _not_ created. The script generates the command it _would_ run. Since the source snapshot path won't exist, you cannot copy paste the command to run it manually without creating a snapshot first.
 - **TEST FIRST**: Always test the script in a non-critical environment before using it in production. I am not responsible for any data loss or damage caused by this script.
+
+## License
+
+GNU General Public License v3.0
