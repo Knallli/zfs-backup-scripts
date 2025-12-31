@@ -39,6 +39,8 @@ BACKUP_JOBS=(
 )
 ```
 
+> **Tip**: Run `zfs list` in your terminal to see all available datasets and their names. Parents are usually named `pool/dataset`, while children are named `pool/dataset/child`.
+
 ### 2. Run
 
 Execute the script as root (or a user with ZFS/rsync permissions):
