@@ -4,7 +4,9 @@ A backup solution to sync **ZFS snapshots** to a local or remote target director
 
 ## Features
 
-- **3-2-1 Backup Strategy Ready**: Serves as an excellent bridge to move ZFS data to a non-ZFS storage (e.g., specific disks, unassigned devices, or remote servers) for your second or third backup copy.
+- **Unraid Optimized**: Specifically designed to backup data from a high-performance **Unraid ZFS Pool** to the slower, parity-protected **Unraid Array** (or unassigned devices).
+- **Zero-Downtime Consistency**: thanks to atomic ZFS snapshots, you do **not** need to stop Docker containers or VMs. Database integrity is preserved without downtime.
+- **3-2-1 Backup Strategy Ready**: Serves as an excellent bridge to move ZFS data to a non-ZFS storage (e.g., specific disks, unassigned devices, or remote servers) for your second or third backup copy. **Offsite Ready**: The target directory contains standard files (not ZFS streams), so you can easily use tools like **Restic, Zerobyte, or Duplicati** to push this data to the cloud (the "1" in your strategy).
 - **Automated Snaps & Cleanups**: Automatically creates temporary ZFS snapshots for consistent backups and cleans them up afterwards.
 - **Delta Headers Only**: Uses ZFS snapshots to ensure only consistent file states are backed up.
 - **Nested Dataset Protection**: **(Critical Feature)** Specifically handles ZFS parents with nested children. It excludes child dataset paths during the parent's sync to prevent `rsync --delete` from accidentally wiping the child dataset's content in the backup target. Each child dataset is then backed up in its own iteration.
@@ -15,7 +17,16 @@ A backup solution to sync **ZFS snapshots** to a local or remote target director
 
 ## Usage
 
-### 1. Configuration
+### 1. Scheduler (Unraid Userscripts or cron)
+
+This script is perfect for the **User Scripts** plugin in Unraid.
+
+- Create a new script.
+- Paste the content of `skript.sh`.
+- Set the schedule to **Daily**, **Weekly**, or a custom Cron schedule.
+- **No downtime required**: Since it uses snapshots, your services can keep running during the backup.
+
+### 2. Configuration
 
 Open `skript.sh` and edit the `BACKUP_JOBS` array.
 The key is the **ZFS source dataset**, and the value is the **destination path**.

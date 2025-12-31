@@ -15,6 +15,38 @@ SNAP_PREFIX="rsync_auto"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 NEW_SNAP_NAME="${SNAP_PREFIX}_$TIMESTAMP"
 
+# --- EXECUTION PLAN ---
+echo "====================================================================="
+echo "EXECUTION PLAN:"
+if [ "$ENABLE_DRY_RUN" = true ]; then
+    echo "!!! DRY RUN MODE ACTIVE !!!"
+fi
+
+for PARENT_DATASET in "${!BACKUP_JOBS[@]}"; do
+    echo "---------------------------------------------------------------------"
+    echo "Job: Sync $PARENT_DATASET -> ${BACKUP_JOBS[$PARENT_DATASET]}"
+    
+    # Check for old snapshots to delete
+    OLD_SNAPS=$(zfs list -H -t snapshot -o name -r "$PARENT_DATASET" 2>/dev/null | grep "@${SNAP_PREFIX}_")
+    
+    if [ -n "$OLD_SNAPS" ]; then
+        echo "  [DELETE] The following old snapshots will be removed:"
+        for s in $OLD_SNAPS; do
+            echo "    - $s"
+        done
+    else
+        echo "  [INFO] No old snapshots found to cleanup."
+    fi
+
+    # Check for new snapshot creation
+    echo "  [CREATE] New recursive snapshot will be created:"
+    echo "    - $PARENT_DATASET@$NEW_SNAP_NAME"
+done
+echo "====================================================================="
+echo "Starting in 5 seconds..."
+sleep 5
+echo ""
+
 # --- LOGIC ---
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #  WARNING: DO NOT EDIT THE LOGIC BELOW UNLESS YOU KNOW WHAT YOU ARE DOING
@@ -48,7 +80,12 @@ for PARENT_DATASET in "${!BACKUP_JOBS[@]}"; do
 
         SNAP_SOURCE="$DS_MOUNT/.zfs/snapshot/$NEW_SNAP_NAME/"
 
-        echo "  -> Sync Dataset: $DS"
+        if [ "$DS" == "$PARENT_DATASET" ]; then
+            echo "  [ROOT] Syncing Parent Dataset: $DS"
+        else
+            echo "  [CHILD] Transitioning to Nested Dataset: $DS"
+        fi
+        echo "     -> Target: $CURRENT_TARGET"
         
         if [ "$ENABLE_DRY_RUN" = false ]; then
             mkdir -p "$CURRENT_TARGET"
@@ -79,6 +116,7 @@ for PARENT_DATASET in "${!BACKUP_JOBS[@]}"; do
                 -e 's/^>f\.s\.\.\.\.\.\.\. /\[MOD\] /' \
                 -e 's/^>fc\.\.\.\.\.\.\.\. /\[MOD\] /' \
                 -e 's/^>fc\.t\.\.\.\.\.\. /\[MOD\] /' \
+                -e 's/^>fcst\.\.\.\.\.\. /\[MOD\] /' \
                 -e 's/^>f\.\.t\.\.\.\.\.\. /\[MOD\] /' \
                 -e 's/^\*deleting   /\[DEL\] /' \
                 -e 's/^cd\+\+\+\+\+\+\+\+ /\[DIR\] /' \
