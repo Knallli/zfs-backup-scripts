@@ -1,9 +1,8 @@
 #!/bin/bash
 
-# --- KONFIGURATION ---
-ENABLE_DRY_RUN=false 
+# --- CONFIGURATION ---
+ENABLE_DRY_RUN=false
 
-# Haupt-Datasets und ihre Ziel-Basispfade
 declare -A BACKUP_JOBS
 BACKUP_JOBS=(
     ["cache/main"]="/mnt/user/backup/zfs-test/main"
@@ -12,62 +11,86 @@ BACKUP_JOBS=(
     ["cache/lxc"]="/mnt/user/backup/zfs-test/lxc"
 )
 
+SNAP_PREFIX="rsync_auto"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-SNAP_NAME="rsync_full_$TIMESTAMP"
+NEW_SNAP_NAME="${SNAP_PREFIX}_$TIMESTAMP"
 
-# --- LOGIK ---
+# --- LOGIC ---
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#  WARNING: DO NOT EDIT THE LOGIC BELOW UNLESS YOU KNOW WHAT YOU ARE DOING
+#  ESPECIALLY THE NESTED DATASET EXCLUSION LOGIC
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 for PARENT_DATASET in "${!BACKUP_JOBS[@]}"; do
     TARGET_BASE="${BACKUP_JOBS[$PARENT_DATASET]}"
     
     echo "====================================================================="
-    echo "VERARBEITE PARENT: $PARENT_DATASET"
-    
-    # 1. Alle Child-Datasets finden (inklusive dem Parent selbst)
-    # Wir sortieren sie, damit der Parent zuerst kommt
-    DATASETS=$(zfs list -H -o name -r "$PARENT_DATASET")
+    echo "PARENT: $PARENT_DATASET"
 
-    # 2. Rekursiven Snapshot für den ganzen Baum erstellen
+    # 1. CLEANUP OLD SNAPSHOTS
+    zfs list -H -t snapshot -o name -r "$PARENT_DATASET" | grep "@${SNAP_PREFIX}_" | xargs -n 1 zfs destroy 2>/dev/null
+
+    # 2. CREATE NEW SNAPSHOTS
     if [ "$ENABLE_DRY_RUN" = false ]; then
-        echo "  [EXEC] Erstelle rekursiven Snapshot für $PARENT_DATASET Baum..."
-        zfs snapshot -r "$PARENT_DATASET@$SNAP_NAME"
-    else
-        echo "  [DRY] Würde snapshot -r $PARENT_DATASET@$SNAP_NAME ausführen"
+        zfs snapshot -r "$PARENT_DATASET@$NEW_SNAP_NAME"
     fi
 
-    # 3. Jedes Dataset einzeln per rsync übertragen
-    for DS in $DATASETS; do
-        # Mountpoint des aktuellen (Sub-)Datasets ermitteln
-        DS_MOUNT=$(zfs get -H -o value mountpoint "$DS")
-        
-        # Relativen Pfad zum Parent berechnen, um die Struktur im Ziel nachzubilden
-        # Beispiel: Parent=cache/main, DS=cache/main/docker/vol1 -> REL_PATH=docker/vol1
-        REL_PATH=${DS#$PARENT_DATASET}
-        REL_PATH=${REL_PATH#/} # Führenden Slash entfernen falls vorhanden
-        
-        # Zielordner für dieses spezifische Dataset
-        CURRENT_TARGET="$TARGET_BASE/$REL_PATH"
-        SNAP_PATH="$DS_MOUNT/.zfs/snapshot/$SNAP_NAME"
+    # 3. PROCESS ALL DATASETS IN TREE
+    ALL_DATASETS=$(zfs list -H -o name -r "$PARENT_DATASET")
 
-        echo "  -> Sync: $DS"
+    for DS in $ALL_DATASETS; do
+        DS_MOUNT=$(zfs get -H -o value mountpoint "$DS")
+        REL_PATH=${DS#$PARENT_DATASET}
+        REL_PATH=${REL_PATH#/} 
+
+        CURRENT_TARGET="$TARGET_BASE"
+        [ -n "$REL_PATH" ] && CURRENT_TARGET="$TARGET_BASE/$REL_PATH"
+
+        SNAP_SOURCE="$DS_MOUNT/.zfs/snapshot/$NEW_SNAP_NAME/"
+
+        echo "  -> Sync Dataset: $DS"
         
         if [ "$ENABLE_DRY_RUN" = false ]; then
             mkdir -p "$CURRENT_TARGET"
-            # rsync ausführen
-            # Wir nutzen hier NICHT --delete auf Parent-Ebene für die Subs, 
-            # da rsync sonst die anderen Sub-Ordner löschen würde.
-            rsync -avh --delete "$SNAP_PATH/" "$CURRENT_TARGET/"
+            
+            # --- CRITICAL FIX FOR NESTED DATASETS ---
+            # We search for IMMEDIATE children of this dataset.
+            # We exclude these folders from the current rsync run.
+            # This prevents rsync from deleting the content of child datasets in the target!
+            
+            EXCLUDE_ARGS=""
+            CHILD_DATASETS=$(zfs list -H -o name -r -d 1 "$DS" | grep -v "^$DS$")
+            for CHILD in $CHILD_DATASETS; do
+                # Extract only the name of the child folder
+                CHILD_NAME=${CHILD##*/}
+                EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude=/$CHILD_NAME"
+                echo "     (Protecting child dataset folder: /$CHILD_NAME)"
+            done
+
+            # Execute rsync
+            # -a: Archive, -v: Verbose, -i: Itemize, -c: Checksum
+            # --delete: Delete extraneous files from dest dirs
+            # -x: Don't cross filesystem boundaries
+            # Pipe output to sed for human-readable logs
+            eval rsync -avich --delete --inplace -x --ignore-times $EXCLUDE_ARGS "$SNAP_SOURCE" "$CURRENT_TARGET/" | \
+            sed -E \
+                -e 's/^>f\+\+\+\+\+\+\+\+ /\[NEW\] /' \
+                -e 's/^>f\.st\.\.\.\.\.\. /\[MOD\] /' \
+                -e 's/^>f\.s\.\.\.\.\.\.\. /\[MOD\] /' \
+                -e 's/^>fc\.\.\.\.\.\.\.\. /\[MOD\] /' \
+                -e 's/^>fc\.t\.\.\.\.\.\. /\[MOD\] /' \
+                -e 's/^>f\.\.t\.\.\.\.\.\. /\[MOD\] /' \
+                -e 's/^\*deleting   /\[DEL\] /' \
+                -e 's/^cd\+\+\+\+\+\+\+\+ /\[DIR\] /' \
+                -e '/^\./d' 
         else
-            echo "    [DRY] rsync -avh --delete $SNAP_PATH/ $CURRENT_TARGET/"
+            echo "    [DRY] rsync -avich --delete -x \"$SNAP_SOURCE\" \"$CURRENT_TARGET/\""
         fi
     done
 
-    # 4. Cleanup: Alle Snapshots im Baum löschen
-    if [ "$ENABLE_DRY_RUN" = false ]; then
-        echo "  [EXEC] Lösche rekursiven Snapshot Baum..."
-        zfs destroy -r "$PARENT_DATASET@$SNAP_NAME"
-    fi
+    # 4. FINAL CLEANUP
+    [ "$ENABLE_DRY_RUN" = false ] && zfs destroy -r "$PARENT_DATASET@$NEW_SNAP_NAME"
 done
 
 echo "====================================================================="
-echo "Backup-Lauf beendet."
+echo "Done."
