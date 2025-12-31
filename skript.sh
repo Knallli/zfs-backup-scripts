@@ -105,11 +105,11 @@ for PARENT_DATASET in "${!BACKUP_JOBS[@]}"; do
             done
 
             # Execute rsync
-            # -a: Archive, -v: Verbose, -i: Itemize, -c: Checksum
+            # -a: Archive, -v: Verbose, -i: Itemize
             # --delete: Delete extraneous files from dest dirs
             # -x: Don't cross filesystem boundaries
             # Pipe output to sed for human-readable logs
-            eval rsync -avich --delete --inplace -x --ignore-times $EXCLUDE_ARGS "$SNAP_SOURCE" "$CURRENT_TARGET/" | \
+            eval rsync -avih --delete --inplace -x $EXCLUDE_ARGS "$SNAP_SOURCE" "$CURRENT_TARGET/" | \
             sed -E \
                 -e 's/^>f\+\+\+\+\+\+\+\+ /\[NEW\] /' \
                 -e 's/^>f\.st\.\.\.\.\.\. /\[MOD\] /' \
@@ -122,8 +122,9 @@ for PARENT_DATASET in "${!BACKUP_JOBS[@]}"; do
                 -e 's/^cd\+\+\+\+\+\+\+\+ /\[DIR\] /' \
                 -e '/^\./d' 
         else
-            echo "    [DRY] rsync -avich --delete -x \"$SNAP_SOURCE\" \"$CURRENT_TARGET/\""
+            echo "    [DRY] rsync -avih --delete -x \"$SNAP_SOURCE\" \"$CURRENT_TARGET/\""
         fi
+        echo ""
     done
 
     # 4. FINAL CLEANUP
